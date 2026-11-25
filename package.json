@@ -1,0 +1,17 @@
+{
+  "name": "drop-feed",
+  "version": "1.0.0",
+  "description": "Drip-feed local video dirs or Invidious playlists into RSS feeds on a weekly schedule",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "yaml": "^2.6.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

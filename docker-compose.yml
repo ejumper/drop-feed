@@ -1,0 +1,29 @@
+services:
+  drop-feed:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3011:3000"
+    environment:
+      PORT: 3000
+      TZ: America/Chicago
+      FEEDS_DIR: /feeds
+      DATA_DIR: /data
+      PUBLIC_BASE_URL: https://rss.halfab.net/api/dropfeed
+      INVIDIOUS_INTERNAL_URL: http://invidious:3000
+      INVIDIOUS_PUBLIC_URL: https://tube.halfab.net
+      SCAN_INTERVAL_SECONDS: 60
+    volumes:
+      - "${RSS_DIR}:/feeds:ro"
+      - ./data:/data
+    networks:
+      - invidious_default
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  invidious_default:
+    external: true
