@@ -145,13 +145,15 @@ async function processFeed(feed) {
   }
 
   if (existing === null) {
-    redealDeck(state, ids, cfg.shuffle);
+    redealDeck(state, ids, cfg.shuffle, Math.random, { sortNatural: cfg.type !== 'playlist' });
     state.flags.finished = ids.length === 0;
     log(`${slug}: created — ${ids.length} items, per_week=${cfg.per_week}, first=${cfg.first}`);
   } else {
     // live shuffle toggle → re-deal the pending deck
     if (state.lastShuffle !== cfg.shuffle) {
-      const n = redealDeck(state, ids, cfg.shuffle);
+      const n = redealDeck(state, ids, cfg.shuffle, Math.random, {
+        sortNatural: cfg.type !== 'playlist',
+      });
       dirty = true;
       log(`${slug}: shuffle=${cfg.shuffle} — pending deck re-dealt (${n} items)`);
     } else {

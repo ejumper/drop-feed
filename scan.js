@@ -40,12 +40,17 @@ export function shuffle(ids, rng = Math.random) {
 
 // Re-deal the pending deck (shuffle toggle / cycle start). Keeps released
 // items frozen; pending = current ids minus this cycle's releases.
-export function redealDeck(state, ids, shuffleOn, rng = Math.random) {
+// sortNatural: filename feeds sort naturally; playlist feeds keep playlist order.
+export function redealDeck(state, ids, shuffleOn, rng = Math.random, { sortNatural = true } = {}) {
   const releasedThisCycle = new Set(
     state.released.filter((r) => r.cycle === state.cycle).map((r) => r.id)
   );
   const pending = ids.filter((id) => !releasedThisCycle.has(id));
-  state.deck = shuffleOn ? shuffle(pending, rng) : [...pending].sort(naturalCompare);
+  state.deck = shuffleOn
+    ? shuffle(pending, rng)
+    : sortNatural
+      ? [...pending].sort(naturalCompare)
+      : [...pending];
   state.lastShuffle = shuffleOn;
   return pending.length;
 }

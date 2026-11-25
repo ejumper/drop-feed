@@ -167,6 +167,15 @@ test('repeat starts a new cycle with fresh GUIDs', async () => {
   assert.equal(state.released[3].slot, iso(T('2026-01-09T06:00:00')));
 });
 
+test('playlist deck keeps playlist order (no natural re-sort of ids)', () => {
+  const cfg = mkCfg({ type: 'playlist', playlist: 'PLtest12345678' });
+  const { state } = ensureState(null, 'pl', 'pl', cfg, T('2026-01-06T10:00:00'));
+  // ids deliberately NOT alphabetically sorted — playlist order must survive
+  const ids = ['zvid3', 'avid1', 'mvid2', '-eTYA9n2YlE'];
+  redealDeck(state, ids, false, Math.random, { sortNatural: false });
+  assert.deepEqual(state.deck, ['zvid3', 'avid1', 'mvid2', '-eTYA9n2YlE']);
+});
+
 test('shuffle deck holds the same set; re-deal on toggle keeps released frozen', () => {
   const cfg = mkCfg({ shuffle: true });
   const { state } = ensureState(null, 'dir', 'dir', cfg, T('2026-01-06T10:00:00'));
