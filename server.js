@@ -13,10 +13,10 @@ import {
   redealDeck,
 } from './scan.js';
 import { buildFeedXml } from './feeds.js';
-import { serveMedia, safeMediaPath } from './media.js';
+import { serveMedia, safeMediaPath, mimeFor } from './media.js';
 import { InvidiousClient } from './playlist.js';
 import { pageIndex, pageStatus, pagePlain } from './pages.js';
-import { weeklyOffsets, upcomingSlots } from './schedule.js';
+import { makeSchedule, upcomingSlots } from './schedule.js';
 
 const ENV = {
   PORT: parseInt(process.env.PORT || '3000', 10),
@@ -68,14 +68,17 @@ function withLock(key, fn) {
 // ---------- feed pipeline ----------
 
 function makeCtx(feed, cfg, state) {
-  if (cfg.type === 'playlist') {
+  if (cfg.type === 'playlist' || cfg.type === 'channel') {
+    const isChannel = cfg.type === 'channel';
     return {
       base: ENV.PUBLIC_BASE_URL,
       invidiousPublic: ENV.INVIDIOUS_PUBLIC_URL || 'https://tube.halfab.net',
       rng: Math.random,
       currentIds: async () => {
-        const listing = await client.listing(cfg.playlist);
-        state.playlistTitle = listing.title;
+        const listing = isChannel
+          ? await client.channelVideos(cfg.channel, cfg.tab)
+          : await client.listing(cfg.playlist);
+        state.sourceTitle = listing.title;
         state.meta = Object.fromEntries(
           listing.videos.map((v) => [
             v.videoId,
@@ -276,7 +279,15 @@ const server = http.createServer(async (req, res) => {
       if (!state) return pagePlain(res, 404, 'feed not initialized yet');
       const next =
         feed.parsed?.ok && !feed.parsed.config.paused
-          ? upcomingSlots(Date.now(), weeklyOffsets(feed.parsed.config.per_week), 3)
+          ? upcomingSlots(
+              Date.now(),
+              makeSchedule({
+                per_week: feed.parsed.config.per_week,
+                time: feed.parsed.config.time,
+                slug: feed.slug,
+              }),
+              3
+            )
           : [];
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(pageStatus({ feed, state, cfg: feed.parsed?.config, next, env: ENV }));
@@ -295,7 +306,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 // mime from the decoded filename (media.js maps by extension)
-import { mimeFor } from './media.js';
 function safeMime(name) {
   return mimeFor(name);
 }

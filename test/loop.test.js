@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ensureState, syncDeck, tickFeed, redealDeck, naturalCompare, parseConfig } from '../scan.js';
-import { weeklyOffsets } from '../schedule.js';
+import { makeSchedule, weekStart } from '../schedule.js';
 
 const mkCfg = (over = {}) => ({
   title: 'T',
@@ -233,6 +233,73 @@ test('playlist: 10+ consecutive dead entries fail the slot, cursor advances', as
   assert.equal(state.flags.failedSlots.length, 1);
   assert.equal(state.cursor, iso(T('2026-01-07T06:00:00')));
   assert.equal(state.deck.length, deadIds.length); // nothing dropped
+});
+
+test('config parsing: time and channel', () => {
+  const okT = parseConfig('per_week: 4\ntime: "14:30"\n', 'dir');
+  assert.equal(okT.ok, true);
+  assert.equal(okT.config.time, '14:30');
+  const okR = parseConfig('per_week: 4\ntime: random\n', 'dir');
+  assert.equal(okR.ok, true);
+  assert.equal(okR.config.time, 'random');
+  const badT = parseConfig('per_week: 4\ntime: "25:99"\n', 'dir');
+  assert.equal(badT.ok, false);
+  const okC = parseConfig('per_week: 4\ntype: channel\nchannel: https://tube.halfab.net/channel/UCX6OQ3DkcsbYNE6H8uQQuVA/videos\n', 'c');
+  assert.equal(okC.ok, true);
+  assert.equal(okC.config.channel, 'UCX6OQ3DkcsbYNE6H8uQQuVA');
+  assert.equal(okC.config.tab, 'videos');
+  const badC = parseConfig('per_week: 4\ntype: channel\n', 'c');
+  assert.equal(badC.ok, false);
+});
+
+test('time change re-anchors pending items under the new anchor', async () => {
+  const cfg = mkCfg({ per_week: 7, first: 'immediate', time: '06:00' });
+  const { state } = ensureState(null, 'dir', 'dir', cfg, T('2026-01-06T10:00:00'));
+  state.deck = ['a', 'b', 'c'];
+  const ctx = mkCtx(['a', 'b', 'c']);
+  await tickFeed(state, cfg, ctx, T('2026-01-06T10:00:00'));
+  assert.equal(state.released.length, 1);
+
+  const cfg2 = { ...cfg, time: '14:30' };
+  const { state: same, events } = ensureState(state, 'dir', 'dir', cfg2, T('2026-01-06T11:00:00'));
+  assert.ok(events.some((e) => e.startsWith('re-anchored')));
+  await tickFeed(same, cfg2, ctx, T('2026-01-06T11:00:00'));
+  assert.equal(same.released.length, 2); // immediate fired again at re-anchor
+  assert.equal(same.released[1].slot, iso(T('2026-01-06T11:00:00')));
+
+  // future slots follow the 14:30 anchor: next is Jan 6 14:30 (same day, after the 11:00 re-anchor)
+  await tickFeed(same, cfg2, ctx, T('2026-01-07T15:00:00'));
+  assert.equal(same.released[2].slot, iso(T('2026-01-06T14:30:00')));
+});
+
+test('random mode: catch-up releases at the deterministic random slots', async () => {
+  const slug = 'dir';
+  const cfg = mkCfg({ per_week: 14, first: 'next', time: 'random', start: '2026-01-01' });
+  const { state } = ensureState(null, 'dir', slug, cfg, T('2026-01-05T12:00:00'));
+  const ids = Array.from({ length: 30 }, (_, i) => `f${String(i).padStart(2, '0')}`);
+  state.deck = [...ids];
+  const ctx = mkCtx(ids);
+  const start = T('2026-01-01T00:00:00');
+  const now = T('2026-01-05T12:00:00');
+  await tickFeed(state, cfg, ctx, now);
+
+  // recompute the expected due set from the schedule itself
+  const sched = makeSchedule({ per_week: 14, time: 'random', slug });
+  const expected = [];
+  for (const monday of [weekStart(start).getTime(), weekStart(now).getTime()]) {
+    for (const inst of sched.slotInstants(monday)) {
+      if (inst > start && inst <= now) expected.push(inst);
+    }
+  }
+  expected.sort((a, b) => a - b);
+  assert.equal(state.released.length, expected.length);
+  assert.deepEqual(state.released.map((r) => T(r.slot)), expected);
+
+  // determinism across fresh runs
+  const { state: s2 } = ensureState(null, 'dir', slug, cfg, T('2026-01-05T12:00:00'));
+  s2.deck = [...ids];
+  await tickFeed(s2, cfg, mkCtx(ids), now);
+  assert.deepEqual(s2.released.map((r) => r.slot), state.released.map((r) => r.slot));
 });
 
 test('deck sync appends new files and drops vanished ones', () => {

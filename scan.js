@@ -9,13 +9,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parse } from 'yaml';
-import { weeklyOffsets, nextSlotAfter } from './schedule.js';
+import { makeSchedule, nextSlotAfter, parseTimeMinutes } from './schedule.js';
 import { isVideoFile, mimeFor } from './media.js';
-import { parsePlaylistId } from './playlist.js';
+import { parsePlaylistId, parseChannelSource } from './playlist.js';
 
 export const VIDEO_EXTS = null; // see media.js (kept for reference)
 
-const REANCHOR_KEYS = ['per_week', 'start', 'first', 'type', 'playlist'];
+const REANCHOR_KEYS = ['per_week', 'start', 'first', 'type', 'playlist', 'time', 'channel'];
 const SLOT_SKIP_CAP = 10;
 
 export function slugify(name) {
@@ -82,11 +82,16 @@ export function parseConfig(text, dirname) {
     paused: raw.paused === true,
     shuffle: raw.shuffle === true,
     repeat: raw.repeat === true,
-    type: raw.type === 'playlist' ? 'playlist' : 'dir',
+    time: typeof raw.time === 'string' && raw.time.trim() ? raw.time.trim().toLowerCase() : null,
+    type: raw.type === 'playlist' ? 'playlist' : raw.type === 'channel' ? 'channel' : 'dir',
     playlist: null,
+    channel: null,
   };
   if (!Number.isInteger(cfg.per_week) || cfg.per_week < 1) {
     errors.push('per_week: required integer >= 1');
+  }
+  if (cfg.time && cfg.time !== 'random' && parseTimeMinutes(cfg.time) === null) {
+    errors.push('time: expected HH:MM or "random"');
   }
   if (cfg.start && !startInstant(cfg.start)) {
     errors.push('start: expected YYYY-MM-DD');
@@ -95,6 +100,14 @@ export function parseConfig(text, dirname) {
     const pid = parsePlaylistId(raw.playlist);
     if (!pid) errors.push('playlist: required playlist URL or ID when type is playlist');
     else cfg.playlist = pid;
+  }
+  if (cfg.type === 'channel') {
+    const src = parseChannelSource(raw.channel);
+    if (!src) errors.push('channel: required channel URL (…/channel/UC…[/shorts|/videos|/streams]) or UCID');
+    else {
+      cfg.channel = src.ucid;
+      cfg.tab = src.tab;
+    }
   }
   if (errors.length) return { ok: false, errors };
   return { ok: true, config: cfg };
@@ -159,6 +172,8 @@ export function ensureState(prev, dirname, slug, cfg, now) {
     first: cfg.first,
     type: cfg.type,
     playlist: cfg.playlist || null,
+    channel: cfg.channel || null,
+    time: cfg.time || null,
   };
   const events = [];
   if (!prev) {
@@ -220,13 +235,14 @@ export function syncDeck(state, ids) {
 
 function buildEntry(state, cfg, id, meta, due, ctx) {
   const guid = `dropfeed:${state.slug}:${state.cycle}:${id}`;
-  if (cfg.type === 'playlist') {
+  if (cfg.type === 'playlist' || cfg.type === 'channel') {
     const len = meta?.lengthSeconds;
     const dur =
       Number.isFinite(len) && len > 0
         ? `${Math.floor(len / 60)}:${String(len % 60).padStart(2, '0')}`
         : null;
-    const descBits = [`From playlist: ${state.playlistTitle || cfg.title}`];
+    const source = state.sourceTitle || state.playlistTitle || cfg.title;
+    const descBits = [`From ${source}`];
     if (dur) descBits.push(dur);
     return {
       guid,
@@ -263,7 +279,11 @@ function buildEntry(state, cfg, id, meta, due, ctx) {
 export async function tickFeed(state, cfg, ctx, now) {
   const events = [];
   let releasedNow = 0;
-  const offsets = weeklyOffsets(cfg.per_week);
+  const schedule = makeSchedule({
+    per_week: cfg.per_week,
+    time: cfg.time,
+    slug: state.slug,
+  });
 
   if (cfg.paused) {
     state.cursor = iso(now); // frozen at now; unpause resumes at next slot
@@ -279,14 +299,14 @@ export async function tickFeed(state, cfg, ctx, now) {
   if (state.pendingImmediate) {
     if (state.deck.length > 0) {
       state.pendingImmediate = false;
-      releasedNow += await releaseNext(state, cfg, ctx, now, events, offsets);
+      releasedNow += await releaseNext(state, cfg, ctx, now, events);
       state.cursor = iso(now);
     }
   }
 
   let guard = 0;
   while (guard++ < 10000) {
-    const due = nextSlotAfter(new Date(state.cursor).getTime(), offsets);
+    const due = nextSlotAfter(new Date(state.cursor).getTime(), schedule);
     if (due > now) break;
 
     if (state.deck.length === 0) {
@@ -314,7 +334,7 @@ export async function tickFeed(state, cfg, ctx, now) {
       break;
     }
 
-    const released = await releaseNext(state, cfg, ctx, due, events, offsets);
+    const released = await releaseNext(state, cfg, ctx, due, events);
     if (released === 'failed') {
       state.flags.failedSlots.push({ slot: iso(due), reason: `${SLOT_SKIP_CAP}+ consecutive unavailable entries` });
       state.cursor = iso(due);
@@ -330,7 +350,7 @@ export async function tickFeed(state, cfg, ctx, now) {
 
 // Release the next releasable deck item at slot time `due`.
 // Returns true/false (released) or 'failed' (skip cap exhausted).
-async function releaseNext(state, cfg, ctx, due, events, _offsets) {
+async function releaseNext(state, cfg, ctx, due, events) {
   let idx = 0;
   let consecutive = 0;
   while (idx < state.deck.length) {

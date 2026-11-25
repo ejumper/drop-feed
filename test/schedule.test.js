@@ -2,7 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { weeklyOffsets, nextSlotAfter, weekStart, upcomingSlots } from '../schedule.js';
+import { weeklyOffsets, makeSchedule, nextSlotAfter, weekStart, upcomingSlots, randomWeekOffsets, parseTimeMinutes, mulberry32, hash32 } from '../schedule.js';
 
 const DAY = 1440;
 const at = (day, minutes) => day * DAY + minutes; // minutes offset from Mon 00:00
@@ -68,7 +68,7 @@ test('validation', () => {
 const d = (month, day, h, min = 0) => new Date(2026, month - 1, day, h, min, 0, 0);
 
 test('nextSlotAfter basics (local time, Dec 2026: Dec 1 = Tue)', () => {
-  const w7 = weeklyOffsets(7);
+  const w7 = makeSchedule({ per_week: 7 });
   // Wednesday Dec 2 12:00 → Thursday Dec 3 06:00
   assert.deepEqual(new Date(nextSlotAfter(d(12, 2, 12), w7)), d(12, 3, 6));
   // Sunday Dec 6 23:00 → Monday Dec 7 06:00
@@ -76,12 +76,12 @@ test('nextSlotAfter basics (local time, Dec 2026: Dec 1 = Tue)', () => {
   // exactly at a slot → strictly after
   assert.deepEqual(new Date(nextSlotAfter(d(12, 7, 6), w7)), d(12, 8, 6));
   // per_week 3 (Mon, Wed, Sat): Thu Dec 3 → Sat Dec 5
-  const w3 = weeklyOffsets(3);
+  const w3 = makeSchedule({ per_week: 3 });
   assert.deepEqual(new Date(nextSlotAfter(d(12, 3, 12), w3)), d(12, 5, 6));
   // per_week 14: Thu 09:00 → Thu 18:00
-  assert.deepEqual(new Date(nextSlotAfter(d(12, 3, 9), weeklyOffsets(14))), d(12, 3, 18));
+  assert.deepEqual(new Date(nextSlotAfter(d(12, 3, 9), makeSchedule({ per_week: 14 }))), d(12, 3, 18));
   // per_week 21 (06/14/22): Thu 15:00 → Thu 22:00
-  assert.deepEqual(new Date(nextSlotAfter(d(12, 3, 15), weeklyOffsets(21))), d(12, 3, 22));
+  assert.deepEqual(new Date(nextSlotAfter(d(12, 3, 15), makeSchedule({ per_week: 21 }))), d(12, 3, 22));
 });
 
 test('weekStart lands on Monday 00:00', () => {
@@ -91,9 +91,50 @@ test('weekStart lands on Monday 00:00', () => {
 });
 
 test('upcomingSlots returns strictly increasing future slots', () => {
-  const ups = upcomingSlots(d(12, 2, 12), weeklyOffsets(3), 3);
+  const ups = upcomingSlots(d(12, 2, 12), makeSchedule({ per_week: 3 }), 3);
   assert.equal(ups.length, 3);
   assert.deepEqual(new Date(ups[0]), d(12, 5, 6)); // Sat
   assert.deepEqual(new Date(ups[1]), d(12, 7, 6)); // Mon
   assert.deepEqual(new Date(ups[2]), d(12, 9, 6)); // Wed
+});
+
+test('anchor param moves slot times', () => {
+  assert.deepEqual(weeklyOffsets(2, 870), [870, 870 + 4 * DAY]);
+  const sched = makeSchedule({ per_week: 1, time: '14:30' });
+  const inst = sched.slotInstants(weekStart(d(12, 7, 6)).getTime())[0];
+  assert.deepEqual(new Date(inst), d(12, 7, 14, 30));
+});
+
+test('parseTimeMinutes', () => {
+  assert.equal(parseTimeMinutes('06:00'), 360);
+  assert.equal(parseTimeMinutes('6:00'), 360);
+  assert.equal(parseTimeMinutes('14:30'), 870);
+  assert.equal(parseTimeMinutes(undefined), 360);
+  assert.equal(parseTimeMinutes('random'), null);
+  assert.equal(parseTimeMinutes('25:00'), null);
+  assert.equal(parseTimeMinutes('12:99'), null);
+});
+
+test('random: deterministic per (slug, week), correct structure', () => {
+  const monday = weekStart(d(12, 7, 6)).getTime();
+  const sched = makeSchedule({ per_week: 14, time: 'random', slug: 'x' });
+  const a = sched.slotInstants(monday);
+  const b = sched.slotInstants(monday);
+  assert.deepEqual(a, b);              // stable within the week
+  assert.equal(a.length, 14);
+  const perDay = new Array(7).fill(0);
+  for (const inst of a) perDay[(new Date(inst).getDay() + 6) % 7]++;
+  assert.deepEqual(perDay, [2, 2, 2, 2, 2, 2, 2]);   // 2 random slots every day
+  const nm = new Date(monday);
+  nm.setDate(nm.getDate() + 7);
+  const c = sched.slotInstants(nm.getTime());
+  assert.equal(c.length, 14);
+  assert.notDeepEqual(a, c);          // fresh times the next week
+});
+
+test('randomWeekOffsets: count, range, sorted', () => {
+  const offs = randomWeekOffsets(21, mulberry32(hash32('seed')));
+  assert.equal(offs.length, 21);
+  for (const o of offs) assert.ok(o >= 0 && o < 7 * DAY, `range: ${o}`);
+  assert.deepEqual(offs, [...offs].sort((x, y) => x - y));
 });

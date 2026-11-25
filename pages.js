@@ -99,7 +99,7 @@ export function pageIndex(rows, env) {
 }
 
 function titleOf(state, id, cfg) {
-  if (cfg?.type === 'playlist') return state.meta?.[id]?.title || id;
+  if (cfg?.type === 'playlist' || cfg?.type === 'channel') return state.meta?.[id]?.title || id;
   return path.basename(id);
 }
 
@@ -117,8 +117,9 @@ export function pageStatus({ feed, state, cfg, next, env }) {
 
   if (cfg) {
     b.push('<h2>Settings</h2><table>');
-    b.push(`<tr><th>type</th><td>${esc(cfg.type)}${cfg.playlist ? ` — <span class="url">${esc(String(state.playlistTitle || cfg.playlist))}</span>` : ''}</td></tr>`);
+    b.push(`<tr><th>type</th><td>${esc(cfg.type)}${cfg.playlist ? ` — <span class="url">${esc(String(state.playlistTitle || cfg.playlist))}</span>` : ''}${cfg.channel ? ` — <span class="url">${esc(String(state.sourceTitle || cfg.channel))}</span>` : ''}</td></tr>`);
     b.push(`<tr><th>per_week</th><td>${cfg.per_week}</td></tr>`);
+    b.push(`<tr><th>time</th><td>${esc(cfg.time || '06:00 (default)')}</td></tr>`);
     b.push(`<tr><th>first</th><td>${esc(cfg.first)}</td></tr>`);
     b.push(`<tr><th>start</th><td>${esc(cfg.start || 'when first seen')}</td></tr>`);
     b.push(`<tr><th>shuffle / repeat / paused</th><td>${cfg.shuffle ? 'yes' : 'no'} / ${cfg.repeat ? 'yes' : 'no'} / ${cfg.paused ? 'yes' : 'no'}</td></tr>`);
