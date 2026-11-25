@@ -289,7 +289,8 @@ function safeMime(name) {
   return mimeFor(name);
 }
 
-server.listen(ENV.PORT, '127.0.0.1', () => {
+// bind all interfaces: docker-proxy traffic arrives on the container's eth0
+server.listen(ENV.PORT, () => {
   log(`listening on 127.0.0.1:${ENV.PORT}`);
   log(`feeds: ${ENV.FEEDS_DIR}  data: ${ENV.DATA_DIR}  base: ${ENV.PUBLIC_BASE_URL}`);
   processAll();
