@@ -117,13 +117,50 @@ export class InvidiousClient {
   }
 
   // A channel tab's full video listing ({ title, tab, videos: [{ videoId,
-  // title, author, lengthSeconds }] }), following `continuation` pagination
-  // (48 per page). Cached like playlist listings. Throws on failure.
+  // title, author, lengthSeconds, published }] }), following `continuation`
+  // pagination (48 per page). Cached like playlist listings. Throws on failure.
+  // tab 'all' merges shorts + videos + streams (deduped, newest-published first).
   async channelVideos(ucid, tab = 'shorts', { maxPages = 40 } = {}) {
     const key = `${ucid}/${tab}`;
     const cached = this.listings.get(key);
     if (cached && Date.now() - cached.fetchedAt < this.listingTtlMs) return cached.data;
 
+    let videos;
+    if (tab === 'all') {
+      const tabs = await Promise.allSettled([
+        this.#fetchChannelTab(ucid, 'shorts', maxPages),
+        this.#fetchChannelTab(ucid, 'videos', maxPages),
+        this.#fetchChannelTab(ucid, 'streams', maxPages),
+      ]);
+      const seen = new Set();
+      videos = [];
+      for (const r of tabs) {
+        if (r.status !== 'fulfilled') continue;
+        for (const v of r.value) {
+          if (!seen.has(v.videoId)) {
+            seen.add(v.videoId);
+            videos.push(v);
+          }
+        }
+      }
+      videos.sort((a, b) => (b.published || 0) - (a.published || 0)); // newest first
+    } else {
+      videos = await this.#fetchChannelTab(ucid, tab, maxPages);
+    }
+
+    let title = `${ucid} — ${tab}`;
+    try {
+      const about = await this.channelAbout(ucid);
+      if (about.author) title = `${about.author} — ${tab}`;
+    } catch {
+      /* fallback title */
+    }
+    const out = { title, tab, videos };
+    this.listings.set(key, { fetchedAt: Date.now(), data: out });
+    return out;
+  }
+
+  async #fetchChannelTab(ucid, tab, maxPages) {
     const videos = [];
     let continuation = null;
     for (let page = 0; page < maxPages; page++) {
@@ -138,22 +175,13 @@ export class InvidiousClient {
             title: v.title || v.videoId,
             author: v.author || null,
             lengthSeconds: Number(v.lengthSeconds) || 0,
+            published: Number(v.published) || 0,
           });
         }
       }
       continuation = data.continuation || null;
       if (!continuation) break;
     }
-
-    let title = `${ucid} — ${tab}`;
-    try {
-      const about = await this.channelAbout(ucid);
-      if (about.author) title = `${about.author} — ${tab}`;
-    } catch {
-      /* fallback title */
-    }
-    const out = { title, tab, videos };
-    this.listings.set(key, { fetchedAt: Date.now(), data: out });
-    return out;
+    return videos;
   }
 }

@@ -108,6 +108,12 @@ export function parseConfig(text, dirname) {
       cfg.channel = src.ucid;
       cfg.tab = src.tab;
     }
+    const rawTab = typeof raw.tab === 'string' && raw.tab.trim() ? raw.tab.trim().toLowerCase() : null;
+    if (rawTab && !['shorts', 'videos', 'streams', 'all'].includes(rawTab)) {
+      errors.push('tab: expected shorts, videos, streams or all');
+    } else if (rawTab) {
+      cfg.tab = rawTab; // explicit override — the only way to express "all"
+    }
   }
   if (errors.length) return { ok: false, errors };
   return { ok: true, config: cfg };

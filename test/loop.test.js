@@ -250,6 +250,11 @@ test('config parsing: time and channel', () => {
   assert.equal(okC.config.tab, 'videos');
   const badC = parseConfig('per_week: 4\ntype: channel\n', 'c');
   assert.equal(badC.ok, false);
+  const all = parseConfig('per_week: 4\ntype: channel\nchannel: https://tube.halfab.net/channel/UCX6OQ3DkcsbYNE6H8uQQuVA/shorts\ntab: all\n', 'c');
+  assert.equal(all.ok, true);
+  assert.equal(all.config.tab, 'all');   // explicit override wins over URL tab
+  const badTab = parseConfig('per_week: 4\ntype: channel\nchannel: UCX6OQ3DkcsbYNE6H8uQQuVA\ntab: nope\n', 'c');
+  assert.equal(badTab.ok, false);
 });
 
 test('time change re-anchors pending items under the new anchor', async () => {
