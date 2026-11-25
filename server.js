@@ -127,6 +127,7 @@ async function processFeed(feed) {
   const existing = loadState(slug);
   const { state } = ensureState(existing, feed.dirname, slug, cfg, now);
   const ctx = makeCtx(feed, cfg, state);
+  let dirty = existing === null;
 
   // ids for creation / deck sync (transient playlist failure → skip this round)
   let ids = null;
@@ -138,7 +139,10 @@ async function processFeed(feed) {
     saveState(state);
     return state;
   }
-  if (state.flags.lastError) state.flags.lastError = null;
+  if (state.flags.lastError) {
+    state.flags.lastError = null;
+    dirty = true;
+  }
 
   if (existing === null) {
     redealDeck(state, ids, cfg.shuffle);
@@ -148,17 +152,22 @@ async function processFeed(feed) {
     // live shuffle toggle → re-deal the pending deck
     if (state.lastShuffle !== cfg.shuffle) {
       const n = redealDeck(state, ids, cfg.shuffle);
+      dirty = true;
       log(`${slug}: shuffle=${cfg.shuffle} — pending deck re-dealt (${n} items)`);
     } else {
       const { added, removed } = syncDeck(state, ids);
-      if (added || removed) log(`${slug}: deck +${added}/-${removed}`);
+      if (added || removed) {
+        dirty = true;
+        log(`${slug}: deck +${added}/-${removed}`);
+      }
     }
   }
 
   const { events, releasedNow } = await tickFeed(state, cfg, ctx, now);
   state.flags.configError = null;
   for (const ev of events) log(`${slug}: ${ev}`);
-  if (releasedNow || events.length || existing === null) saveState(state);
+  if (releasedNow || events.length) dirty = true;
+  if (dirty) saveState(state);
   return state;
 }
 
