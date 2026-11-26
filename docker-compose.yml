@@ -14,7 +14,9 @@ services:
       INVIDIOUS_PUBLIC_URL: https://tube.halfab.net
       SCAN_INTERVAL_SECONDS: 60
     volumes:
-      - "${RSS_DIR}:/feeds:ro"
+      # rw: the admin UI writes <feed dir>/config.yml (atomic tmp+rename);
+      # nothing else in the tree is ever written or deleted
+      - "${RSS_DIR}:/feeds"
       - ./data:/data
     networks:
       - invidious_default

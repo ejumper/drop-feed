@@ -20,6 +20,10 @@ export function parsePlaylistId(input) {
 
 export const CHANNEL_TABS = ['shorts', 'videos', 'streams'];
 
+// Public Invidious origin used when writing channel URLs back to config files
+// (the parser accepts any host; only the path shape matters).
+export const CHANNEL_URL_BASE = 'https://tube.halfab.net';
+
 // Channel feed source: bare UCID (tab defaults to shorts) or a channel URL
 // whose path segment after the UCID picks the tab (…/channel/UC…/videos).
 // @handles are not supported — the API can't resolve them.
@@ -40,6 +44,51 @@ export function parseChannelSource(input) {
     /* not a URL */
   }
   return null;
+}
+
+// Classify a pasted URL / bare id for the admin create form. Returns one of:
+//   { kind: 'channel', ucid, tab }   — resolvable now
+//   { kind: 'handle', handle, tab }  — needs client.resolveHandle() first
+//   { kind: 'playlist', playlist }
+//   { kind: 'video' }                — a single video is not a feed source
+//   { kind: 'unknown' }
+export function detectSource(input) {
+  if (typeof input !== 'string') return { kind: 'unknown' };
+  const s = input.trim();
+  if (!s) return { kind: 'unknown' };
+  if (/^UC[A-Za-z0-9_-]{20,}$/.test(s)) return { kind: 'channel', ucid: s, tab: 'shorts' };
+  if (/^(?:PL|OL|UU|FL|RD|LL)[A-Za-z0-9_-]{10,}$/.test(s)) return { kind: 'playlist', playlist: s };
+  let u;
+  try {
+    u = new URL(s);
+  } catch {
+    return { kind: 'unknown' };
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return { kind: 'unknown' };
+  const segs = u.pathname.split('/').filter(Boolean);
+  const tabAfter = (i) =>
+    segs[i] && CHANNEL_TABS.includes(segs[i].toLowerCase()) ? segs[i].toLowerCase() : null;
+  const ci = segs.indexOf('channel');
+  if (ci !== -1 && segs[ci + 1]) {
+    if (/^UC[A-Za-z0-9_-]{20,}$/.test(segs[ci + 1])) {
+      return { kind: 'channel', ucid: segs[ci + 1], tab: tabAfter(ci + 2) || 'shorts' };
+    }
+    return { kind: 'unknown' }; // /channel/<custom-name> — no UCID to work with
+  }
+  if (segs[0] && segs[0].startsWith('@')) {
+    return { kind: 'handle', handle: segs[0].slice(1), tab: tabAfter(1) || 'shorts' };
+  }
+  if (segs[0] === 'playlist') {
+    const id = u.searchParams.get('list');
+    if (id && /^[A-Za-z0-9_-]{12,}$/.test(id)) return { kind: 'playlist', playlist: id };
+    const m = u.pathname.match(/^\/playlist\/([A-Za-z0-9_-]{12,})$/);
+    if (m) return { kind: 'playlist', playlist: m[1] };
+    return { kind: 'unknown' };
+  }
+  if ((segs[0] === 'watch' && u.searchParams.get('v')) || segs[0] === 'shorts') {
+    return { kind: 'video' };
+  }
+  return { kind: 'unknown' };
 }
 
 export class InvidiousClient {
@@ -104,6 +153,49 @@ export class InvidiousClient {
       }
       return false;
     }
+  }
+
+  // Resolve an @handle to a UCID by scraping the vanity-URL page's HTML (the
+  // channels API cannot resolve handles). Returns the UCID or null. The UCID
+  // must be the most frequent /UC… match and appear at least 3 times.
+  // Inject fetchPage(url) → html for tests.
+  async resolveHandle(handle, { fetchPage = null } = {}) {
+    const h = String(handle || '').replace(/^@+/, '').trim();
+    if (!h || !/^[\w.-]{1,64}$/.test(h)) return null;
+    let html = '';
+    try {
+      if (fetchPage) {
+        html = await fetchPage(`${this.base}/@${encodeURIComponent(h)}`);
+      } else {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), this.timeoutMs);
+        try {
+          const res = await fetch(`${this.base}/@${encodeURIComponent(h)}`, {
+            signal: ctrl.signal,
+            headers: { Accept: 'text/html' },
+          });
+          if (!res.ok) return null;
+          html = await res.text();
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+    } catch {
+      return null;
+    }
+    const counts = new Map();
+    for (const m of html.matchAll(/UC[A-Za-z0-9_-]{20,}/g)) {
+      counts.set(m[0], (counts.get(m[0]) || 0) + 1);
+    }
+    let best = null;
+    let bestN = 0;
+    for (const [id, n] of counts) {
+      if (n > bestN) {
+        best = id;
+        bestN = n;
+      }
+    }
+    return bestN >= 3 ? best : null;
   }
 
   // { author } for a channel (cached). Throws on failure.

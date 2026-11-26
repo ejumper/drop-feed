@@ -2,7 +2,7 @@
 
 import path from 'node:path';
 
-function esc(s) {
+export function esc(s) {
   return String(s ?? '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
@@ -22,7 +22,9 @@ const fmtDate = (iso) =>
       })
     : '—';
 
-const STYLE = `
+// Base stylesheet shared by the status pages and the admin UI (admin.js adds
+// ADMIN_CSS on top of this).
+export const STYLE = `
   :root { color-scheme: dark; }
   body { font-family: system-ui, sans-serif; background: #14161a; color: #dde1e6;
          margin: 2rem auto; max-width: 60rem; padding: 0 1rem; line-height: 1.5; }

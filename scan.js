@@ -8,14 +8,14 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { parse } from 'yaml';
+import { parse, stringify } from 'yaml';
 import { makeSchedule, nextSlotAfter, parseTimeMinutes } from './schedule.js';
 import { isVideoFile, mimeFor } from './media.js';
-import { parsePlaylistId, parseChannelSource } from './playlist.js';
+import { parsePlaylistId, parseChannelSource, CHANNEL_URL_BASE } from './playlist.js';
 
 export const VIDEO_EXTS = null; // see media.js (kept for reference)
 
-const REANCHOR_KEYS = ['per_week', 'start', 'first', 'type', 'playlist', 'time', 'channel'];
+export const REANCHOR_KEYS = ['per_week', 'start', 'first', 'type', 'playlist', 'time', 'channel'];
 const SLOT_SKIP_CAP = 10;
 
 export function slugify(name) {
@@ -117,6 +117,33 @@ export function parseConfig(text, dirname) {
   }
   if (errors.length) return { ok: false, errors };
   return { ok: true, config: cfg };
+}
+
+// Config object → canonical config.yml text (what the admin form writes).
+// Defaults are omitted so files stay minimal; the result round-trips through
+// parseConfig with identical semantics. Channel feeds are written in URL form
+// (the tab segment encodes shorts/videos/streams; 'all' needs the tab line).
+export function serializeConfig(cfg) {
+  const out = {};
+  if (cfg.title) out.title = cfg.title;
+  out.per_week = cfg.per_week;
+  if (cfg.time) out.time = cfg.time;
+  if (cfg.start) out.start = cfg.start;
+  if (cfg.first && cfg.first !== 'next') out.first = cfg.first;
+  if (cfg.paused) out.paused = true;
+  if (cfg.shuffle) out.shuffle = true;
+  if (cfg.repeat) out.repeat = true;
+  out.type = cfg.type || 'dir';
+  if (out.type === 'playlist' && cfg.playlist) out.playlist = cfg.playlist;
+  if (out.type === 'channel' && cfg.channel) {
+    const tab = cfg.tab || 'shorts';
+    out.channel =
+      tab === 'all'
+        ? `${CHANNEL_URL_BASE}/channel/${cfg.channel}`
+        : `${CHANNEL_URL_BASE}/channel/${cfg.channel}/${tab}`;
+    if (tab === 'all') out.tab = 'all';
+  }
+  return stringify(out, { lineWidth: 0 });
 }
 
 // One subdir under the feeds root.
